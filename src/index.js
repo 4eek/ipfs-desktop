@@ -1,292 +1,90 @@
-import {Menubar} from 'electron-menubar'
-import fs from 'fs'
-import DaemonFactory from 'ipfsd-ctl'
-import {join} from 'path'
-import {dialog, ipcMain, app, BrowserWindow} from 'electron'
+require('v8-compile-cache')
+const { app, dialog } = require('electron')
+const fixPath = require('fix-path')
+const { criticalErrorDialog } = require('./dialogs')
+const logger = require('./common/logger')
+const setupProtocolHandlers = require('./protocol-handlers')
+const setupI18n = require('./i18n')
+const setupNpmOnIpfs = require('./npm-on-ipfs')
+const setupDaemon = require('./daemon')
+const setupWebUI = require('./webui')
+const setupAutoLaunch = require('./auto-launch')
+const setupDownloadCid = require('./download-cid')
+const setupTakeScreenshot = require('./take-screenshot')
+const setupAppMenu = require('./app-menu')
+const setupArgvFilesHandler = require('./argv-files-handler')
+const setupAutoUpdater = require('./auto-updater')
+const setupTray = require('./tray')
+const setupIpfsOnPath = require('./ipfs-on-path')
+const setupAnalytics = require('./analytics')
+const setupSecondInstance = require('./second-instance')
 
-import config from './config'
-import registerControls from './controls/main'
-import handleKnownErrors from './errors'
+// Hide Dock
+if (app.dock) app.dock.hide()
 
-const {debug} = config
+// Sets User Model Id so notifications work on Windows 10
+app.setAppUserModelId('io.ipfs.desktop')
 
-// Handle creating/removing shortcuts on Windows when installing/uninstalling.
-if (require('electron-squirrel-startup')) {
-  app.quit()
+// Fixes $PATH on macOS
+fixPath()
+
+// Only one instance can run at a time
+if (!app.requestSingleInstanceLock()) {
+  process.exit(0)
 }
 
-// Ensure it's a single instance.
-app.makeSingleInstance(() => {
-  debug('Trying to start a second instance')
-  dialog.showErrorBox(
-    'Multiple instances',
-    'Sorry, but there can be only one instance of IPFS Desktop running at the same time.'
-  )
+const ctx = {}
+
+app.on('will-finish-launching', () => {
+  setupProtocolHandlers(ctx)
 })
 
-// Local Variables
-
-let IPFS
-let menubar
-let state = 'stopped'
-
-function send (type, ...args) {
-  if (menubar && menubar.window && menubar.window.webContents) {
-    menubar.window.webContents.send(type, ...args)
-  }
-}
-
-config.send = send
-config.ipfs = () => IPFS
-
-function updateState (st) {
-  state = st
-  onRequestState()
-}
-
-function onRequestState (node, event) {
-  send('node-status', state)
-}
-
-// Moves files from appData/file-history.json to MFS so
-// v0.4.0 is backwards compatible with v0.3.0.
-function moveFilesOver () {
-  const path = join(config.appData, 'file-history.json')
-
-  if (!fs.existsSync(path)) {
+function handleError (err) {
+  // Ignore network errors that might happen during the
+  // execution.
+  if (err.stack.includes('net::')) {
     return
   }
 
-  let files
+  logger.error(err)
+  criticalErrorDialog(err)
+}
+
+process.on('uncaughtException', handleError)
+process.on('unhandledRejection', handleError)
+
+async function run () {
+  try {
+    await app.whenReady()
+  } catch (e) {
+    dialog.showErrorBox('Electron could not start', e.stack)
+    app.exit(1)
+  }
 
   try {
-    files = JSON.parse(fs.readFileSync(path))
+    await setupAnalytics(ctx) // ctx.countlyDeviceId
+    await setupI18n(ctx)
+    await setupAppMenu(ctx)
+
+    await setupWebUI(ctx) // ctx.webui, launchWebUI
+    await setupTray(ctx) // ctx.tray
+    await setupDaemon(ctx) // ctx.getIpfsd, startIpfs, stopIpfs, restartIpfs
+    await setupAutoUpdater(ctx) // ctx.checkForUpdates
+
+    await Promise.all([
+      setupArgvFilesHandler(ctx),
+      setupAutoLaunch(ctx),
+      setupSecondInstance(ctx),
+      // Setup global shortcuts
+      setupDownloadCid(ctx),
+      setupTakeScreenshot(ctx),
+      // Setup PATH-related features
+      setupNpmOnIpfs(ctx),
+      setupIpfsOnPath(ctx)
+    ])
   } catch (e) {
-    debug(e)
-    return
+    handleError(e)
   }
-
-  Promise.all(files.map((file) => IPFS.files.cp([`/ipfs/${file.hash}`, `/${file.name}`])))
-    .then(() => {
-      fs.unlinkSync(path)
-    })
-    .catch((e) => {
-      fs.unlinkSync(path)
-      debug(e)
-    })
 }
 
-function onStartDaemon (node) {
-  debug('Starting daemon')
-  updateState('starting')
-
-  // Tries to remove the repo.lock file if it already exists.
-  // This fixes a bug on Windows, where the daemon seems
-  // not to be exiting correctly, hence the file is not
-  // removed.
-  const lockPath = join(config.settingsStore.get('ipfsPath'), 'repo.lock')
-  const apiPath = join(config.settingsStore.get('ipfsPath'), 'api')
-
-  if (fs.existsSync(lockPath)) {
-    try {
-      fs.unlinkSync(lockPath)
-    } catch (e) {
-      debug('Could not remove lock. Daemon might be running.')
-    }
-  }
-
-  if (fs.existsSync(apiPath)) {
-    try {
-      fs.unlinkSync(apiPath)
-    } catch (e) {
-      debug('Could not remove API file. Daemon might be running.')
-    }
-  }
-
-  const flags = []
-  if (config.settingsStore.get('dhtClient')) {
-    flags.push('--routing=dhtclient')
-  }
-
-  node.start(flags, (err, api) => {
-    if (err) {
-      handleKnownErrors(err)
-      return
-    }
-
-    IPFS = api
-    debug('Daemon started')
-    config.events.emit('node:started')
-
-    if (node.subprocess) {
-      // Stop the executation of the program if some error
-      // occurs on the node.
-      node.subprocess.on('error', (e) => {
-        updateState('stopped')
-        debug(e)
-      })
-    }
-
-    // Move files from V0.3.0
-    moveFilesOver()
-
-    menubar.tray.setImage(config.logo.ice)
-    updateState('running')
-  })
-}
-
-function onStopDaemon (node, done) {
-  debug('Stopping daemon')
-  updateState('stopping')
-
-  config.events.emit('node:stopped')
-
-  node.stop((err) => {
-    if (err) {
-      return debug(err.stack)
-    }
-
-    debug('Stopped daemon')
-    menubar.tray.setImage(config.logo.black)
-
-    IPFS = null
-    updateState('stopped')
-    done()
-  })
-}
-
-function onWillQuit (node, event) {
-  debug('Shutting down application')
-
-  if (IPFS == null) {
-    return
-  }
-
-  event.preventDefault()
-  onStopDaemon(node, () => {
-    app.quit()
-  })
-}
-
-// Initalize a new IPFS node
-function initialize (path, node) {
-  debug('Initialzing new node')
-
-  // Initialize the welcome window.
-  const window = new BrowserWindow({
-    title: 'Welcome to IPFS',
-    icon: config.logo.ice,
-    show: false,
-    resizable: false,
-    width: 850,
-    height: 450
-  })
-
-  // Only show the window when the contents have finished loading.
-  window.on('ready-to-show', () => {
-    window.show()
-    window.focus()
-  })
-
-  // Send the default path as soon as the window is ready.
-  window.webContents.on('did-finish-load', () => {
-    window.webContents.send('setup-config-path', path)
-  })
-
-  // Close the application if the welcome dialog is canceled
-  window.once('close', () => {
-    if (!node.initialized) app.quit()
-  })
-
-  window.setMenu(null)
-  window.loadURL(`file://${__dirname}/views/welcome.html`)
-
-  let userPath = path
-
-  ipcMain.on('setup-browse-path', () => {
-    dialog.showOpenDialog(window, {
-      title: 'Select a directory',
-      defaultPath: path,
-      properties: [
-        'openDirectory',
-        'createDirectory'
-      ]
-    }, (res) => {
-      if (!res) return
-
-      userPath = res[0]
-
-      if (!userPath.match(/.ipfs\/?$/)) {
-        userPath = join(userPath, '.ipfs')
-      }
-
-      window.webContents.send('setup-config-path', userPath)
-    })
-  })
-
-  // Wait for the user to hit 'Install IPFS'
-  ipcMain.on('initialize', (event, { keySize }) => {
-    debug(`Initializing new node with key size: ${keySize} in ${userPath}.`)
-    window.webContents.send('initializing')
-
-    node.init({
-      directory: userPath,
-      keySize: keySize
-    }, (err, res) => {
-      if (err) {
-        return send('initialization-error', String(err))
-      }
-
-      config.settingsStore.set('ipfsPath', userPath)
-
-      send('initialization-complete')
-      updateState('stopped')
-
-      onStartDaemon(node)
-      window.close()
-    })
-  })
-}
-
-// main entry point
-DaemonFactory.create().spawn({
-  repoPath: config.settingsStore.get('ipfsPath'),
-  disposable: false,
-  init: false,
-  start: false,
-  defaultAddrs: true
-}, (err, node) => {
-  if (err) {
-    // We can't start if we fail to aquire
-    // a ipfs node
-    debug(err.stack)
-    process.exit(1)
-  }
-
-  let appReady = () => {
-    debug('Application is ready')
-    menubar.tray.setHighlightMode('always')
-
-    ipcMain.on('request-state', onRequestState.bind(null, node))
-    ipcMain.on('start-daemon', onStartDaemon.bind(null, node))
-    ipcMain.on('stop-daemon', onStopDaemon.bind(null, node, () => {}))
-    ipcMain.on('quit-application', app.quit.bind(app))
-    app.once('will-quit', onWillQuit.bind(null, node))
-
-    registerControls(config)
-
-    let exists = fs.existsSync(node.repoPath)
-
-    if (!exists) {
-      initialize(config.settingsStore.get('ipfsPath'), node)
-    } else {
-      onStartDaemon(node)
-    }
-  }
-
-  menubar = new Menubar(config.menubar)
-  config.menubar = menubar
-
-  if (menubar.isReady()) appReady()
-  else menubar.on('ready', appReady)
-})
+run()

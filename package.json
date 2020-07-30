@@ -1,127 +1,29 @@
 {
   "name": "ipfs-desktop",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.12.2",
   "productName": "IPFS Desktop",
   "description": "IPFS Native Application",
   "main": "src/index.js",
-  "dependencies": {
-    "auto-launch": "^5.0.5",
-    "bl": "^2.0.1",
-    "debug": "^3.1.0",
-    "electron-compile": "^6.4.3",
-    "electron-menubar": "^1.0.1",
-    "electron-squirrel-startup": "^1.0.0",
-    "file-extension": "^4.0.5",
-    "go-ipfs-dep": "^0.4.17",
-    "ipfs-stats": "^1.2.4",
-    "ipfsd-ctl": "^0.39.0",
-    "is-ipfs": "^0.4.2",
-    "lodash.clonedeep": "^4.5.0",
-    "moment": "^2.22.2",
-    "multiaddr": "^5.0.0",
-    "normalize.css": "^8.0.0",
-    "pretty-bytes": "^5.1.0",
-    "prop-types": "^15.6.2",
-    "react": "^16.4.1",
-    "react-dnd": "^5.0.0",
-    "react-dnd-html5-backend": "^5.0.1",
-    "react-dom": "^16.4.1"
-  },
-  "devDependencies": {
-    "babel-eslint": "^8.2.6",
-    "babel-plugin-istanbul": "^4.1.6",
-    "babel-preset-env": "^1.7.0",
-    "babel-preset-react": "^6.24.1",
-    "babel-preset-stage-2": "^6.24.1",
-    "chai": "^4.1.2",
-    "codecov": "^3.0.4",
-    "cross-env": "^5.2.0",
-    "electron-forge": "^5.2.2",
-    "electron-prebuilt-compile": "2.0.6",
-    "enzyme": "^3.3.0",
-    "enzyme-adapter-react-16": "^1.1.1",
-    "eslint": "^5",
-    "eslint-config-aegir": "^1.0.1",
-    "eslint-config-standard-react": "^6.0.0",
-    "eslint-plugin-import": "^2",
-    "eslint-plugin-jsx-a11y": "^6",
-    "eslint-plugin-react": "^7",
-    "expect": "^23.4.0",
-    "istanbul": "^0.4.5",
-    "jsdom": "^11.12.0",
-    "mocha": "^5.2.0",
-    "nyc": "^12.0.2",
-    "pre-commit": "^1.2.2",
-    "sinon": "^6.1.4",
-    "spectron": "^3.8.0"
-  },
   "scripts": {
-    "start": "electron-forge start",
-    "package": "electron-forge package",
-    "make": "electron-forge make",
-    "publish": "electron-forge publish",
-    "lint": "eslint ./src ./test",
-    "test": "cross-env NODE_ENV=test nyc --all mocha --require babel-core/register --require ./test/setup.js --recursive",
-    "coverage": "(nyc report --reporter=text-lcov > coverage.lcov) && codecov"
-  },
-  "nyc": {
-    "include": [
-      "src/**/*.js*"
-    ],
-    "reporter": [
-      "lcov",
-      "text"
-    ],
-    "sourceMap": false,
-    "instrument": false
-  },
-  "config": {
-    "forge": {
-      "make_targets": {
-        "win32": [
-          "squirrel"
-        ],
-        "darwin": [
-          "dmg"
-        ],
-        "linux": [
-          "deb",
-          "rpm"
-        ]
-      },
-      "electronPackagerConfig": {
-        "packageManager": "yarn",
-        "executableName": "ipfs-desktop",
-        "icon": "./src/img/icons/executable/ipfs.ico"
-      },
-      "electronInstallerDebian": {
-        "icon": "./src/img/icons/executable/ipfs.ico",
-        "scripts": {
-          "postinst": "postinst.sh"
-        }
-      },
-      "electronWinstallerConfig": {
-        "name": "Desktop",
-        "setupIcon": "./src/img/icons/executable/ipfs.ico",
-        "loadingGif": "./src/img/loading.gif",
-        "exe": "ipfs-desktop.exe"
-      },
-      "electronInstallerDMG": {
-        "icon": "./src/img/icons/executable/ipfs.icns"
-      },
-      "github_repository": {
-        "owner": "ipfs-shipyard",
-        "name": "ipfs-desktop"
-      }
-    }
+    "start": "cross-env NODE_ENV=development electron src/index.js",
+    "lint": "standard",
+    "test": "cross-env NODE_ENV=test mocha test/unit/**/*.spec.js",
+    "test:e2e": "xvfb-maybe cross-env NODE_ENV=test LIBP2P_ALLOW_WEAK_RSA_KEYS=1 mocha test/e2e/**/*.e2e.js --exit",
+    "postinstall": "run-s install-app-deps build:webui",
+    "install-app-deps": "electron-builder install-app-deps",
+    "clean:webui": "shx rm -rf assets/webui/",
+    "build": "run-s clean:webui build:*",
+    "build:webui": "run-s build:webui:*",
+    "build:webui:download": "npx ipfs-or-gateway -c bafybeihpetclqvwb4qnmumvcn7nh4pxrtugrlpw4jgjpqicdxsv7opdm6e -p assets/webui/ -t 360000 --verbose",
+    "build:webui:minimize": "shx rm -rf assets/webui/static/js/*.map && shx rm -rf assets/webui/static/css/*.map",
+    "build:binaries": "electron-builder --publish onTag"
   },
   "pre-commit": [
     "lint"
   ],
   "keywords": [
     "ipfs",
-    "electron",
     "station",
     "desktop",
     "app"
@@ -130,7 +32,7 @@
     "type": "git",
     "url": "https://github.com/ipfs-shipyard/ipfs-desktop"
   },
-  "author": "IPFS",
+  "author": "Protocol Labs, Inc.",
   "contributors": [
     "Kristoffer Ström <kristoffer@rymdkoloni.se>",
     "David Dias <daviddias@ipfs.io>",
@@ -142,5 +44,62 @@
   "bugs": {
     "url": "https://github.com/ipfs-shipyard/ipfs-desktop/issues"
   },
-  "homepage": "https://github.com/ipfs-shipyard/ipfs-desktop"
+  "homepage": "https://github.com/ipfs-shipyard/ipfs-desktop",
+  "devDependencies": {
+    "@svgr/cli": "^5.4.0",
+    "chai": "^4.2.0",
+    "cross-env": "^7.0.2",
+    "delay": "^4.3.0",
+    "dirty-chai": "^2.0.1",
+    "dotenv": "^8.2.0",
+    "electron": "^8.2.5",
+    "electron-builder": "^22.6.0",
+    "electron-notarize": "^0.3.0",
+    "electron-notarize-dmg": "1.0.0",
+    "got": "^11.1.3",
+    "ipfs-or-gateway": "^2.1.0",
+    "mocha": "^7.1.2",
+    "npm-run-all": "^4.1.5",
+    "pre-commit": "^1.2.2",
+    "proxyquire": "^2.1.3",
+    "request": "^2.88.2",
+    "request-progress": "^3.0.0",
+    "semver-regex": "^3.1.1",
+    "shx": "^0.3.2",
+    "sinon": "^9.0.2",
+    "spectron": "^10.0.1",
+    "standard": "^14.3.4",
+    "tar": "^6.0.2",
+    "tmp": "0.2.1",
+    "xvfb-maybe": "^0.2.1"
+  },
+  "dependencies": {
+    "countly-sdk-nodejs": "^19.8.0",
+    "electron-serve": "^1.0.0",
+    "electron-store": "^5.1.1",
+    "electron-updater": "^4.3.1",
+    "fix-path": "^3.0.0",
+    "fs-extra": "^9.0.0",
+    "go-ipfs-dep": "0.6.0",
+    "i18next": "^19.4.4",
+    "i18next-electron-language-detector": "0.0.10",
+    "i18next-icu": "^1.3.1",
+    "i18next-node-fs-backend": "^2.1.3",
+    "ipfs-http-client": "^44.0.3",
+    "ipfsd-ctl": "^4.1.0",
+    "is-ipfs": "^1.0.3",
+    "it-all": "^1.0.2",
+    "it-concat": "^1.0.0",
+    "multiaddr": "^7.4.3",
+    "multiaddr-to-uri": "^5.1.0",
+    "portfinder": "^1.0.26",
+    "recursive-readdir": "^2.2.2",
+    "stream-to-pull-stream": "^1.7.3",
+    "sudo-prompt": "^9.2.1",
+    "untildify": "^4.0.0",
+    "v8-compile-cache": "^2.1.0",
+    "which": "^2.0.2",
+    "winston": "^3.2.1",
+    "yargs": "^15.3.1"
+  }
 }
